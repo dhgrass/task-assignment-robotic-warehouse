@@ -44,6 +44,8 @@ def main() -> None:
     parser.add_argument("--env-id", required=True)
     parser.add_argument("--policy", choices=["random", "heuristic", "graph_greedy"], default="random")
     parser.add_argument("--distance", choices=["manhattan", "find_path"], default="manhattan")
+    parser.add_argument("--active-alpha", type=int, default=3)
+    parser.add_argument("--max-active-agvs", type=int, default=None)
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--seed", type=int, default=None)
@@ -52,7 +54,17 @@ def main() -> None:
     args = parser.parse_args()
 
     env = TarwareAdapter(gym.make(args.env_id))
-    policy = _build_policy(args.policy, env, distance=args.distance)
+    if args.policy == "graph_greedy":
+        policy = _build_policy(
+            args.policy,
+            env,
+            distance=args.distance,
+        )
+        policy.active_alpha = args.active_alpha
+        if args.max_active_agvs is not None:
+            policy.max_active_agvs = args.max_active_agvs
+    else:
+        policy = _build_policy(args.policy, env, distance=args.distance)
     env.close()
 
     eval_fn = _make_env(args.env_id)
@@ -89,6 +101,10 @@ def main() -> None:
         fieldnames = [
             "episode",
             "seed",
+            "env_id",
+            "distance_mode",
+            "active_alpha",
+            "max_active_agvs",
             "episode_length",
             "shelf_deliveries",
             "clashes",
@@ -99,7 +115,12 @@ def main() -> None:
         ]
         logger = CSVLogger(args.csv, fieldnames=fieldnames)
         for row in episodes:
-            logger.log({key: row.get(key) for key in fieldnames})
+            enriched = dict(row)
+            enriched["env_id"] = args.env_id
+            enriched["distance_mode"] = args.distance
+            enriched["active_alpha"] = args.active_alpha
+            enriched["max_active_agvs"] = args.max_active_agvs
+            logger.log({key: enriched.get(key) for key in fieldnames})
         logger.close()
 
 
