@@ -135,9 +135,10 @@ class GraphGreedyPolicy:
 
             if mission.mission_type == MissionType.PICKING and mission.at_location and agv.carrying_shelf:
                 goal_locations = list(env.goals)
-                dists = [self._dist(env, (agv.y, agv.x), (y, x), agv) for (y, x) in goal_locations]
-                closest_goal_yx = goal_locations[int(np.argmin(dists))]
-                closest_goal_loc_id = self._goal_loc_id((closest_goal_yx[0], closest_goal_yx[1]))
+                goal_yx_list = [(y, x) for (x, y) in goal_locations]
+                dists = [self._dist(env, (agv.y, agv.x), goal_yx, agv) for goal_yx in goal_yx_list]
+                closest_goal_yx = goal_yx_list[int(np.argmin(dists))]
+                closest_goal_loc_id = self._goal_loc_id(closest_goal_yx)
                 if closest_goal_loc_id is None:
                     continue
                 mission.mission_type = MissionType.DELIVERING
