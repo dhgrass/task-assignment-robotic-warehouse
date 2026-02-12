@@ -1,7 +1,7 @@
 """Policies for interacting with the env."""
 
 from .base import Policy
-from .graph_greedy_policy import GraphGreedyPolicy
+from .graph_greedy_policy import DistanceMode, GraphGreedyPolicy
 from .heuristic_policy import HeuristicPolicy
 from .random_policy import RandomPolicy
 
@@ -10,4 +10,5 @@ __all__ = [
     "RandomPolicy",
     "HeuristicPolicy",
     "GraphGreedyPolicy",
+    "DistanceMode",
 ]
