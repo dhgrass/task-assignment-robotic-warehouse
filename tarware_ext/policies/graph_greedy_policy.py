@@ -34,8 +34,15 @@ class GraphGreedyPolicy:
 
     uses_env = True
 
-    def __init__(self, distance_mode: DistanceMode = DistanceMode.MANHATTAN) -> None:
+    def __init__(
+        self,
+        distance_mode: DistanceMode = DistanceMode.MANHATTAN,
+        active_alpha: int = 3,
+        max_active_agvs: int | None = None,
+    ) -> None:
         self.distance_mode = distance_mode
+        self.active_alpha = active_alpha
+        self.max_active_agvs = max_active_agvs
         self._initialized = False
         self._timestep = 0
         self._agents: List[Agent] = []
@@ -73,6 +80,10 @@ class GraphGreedyPolicy:
         self._assigned_pickers = OrderedDict()
         self._assigned_items = OrderedDict()
 
+        if self.max_active_agvs is None:
+            default_limit = max(1, self.active_alpha * max(1, len(self._pickers)))
+            self.max_active_agvs = min(len(self._agvs), default_limit)
+
         self._initialized = True
 
     def _goal_loc_id(self, goal_yx: Tuple[int, int]) -> int | None:
@@ -97,10 +108,19 @@ class GraphGreedyPolicy:
         request_queue = list(env.request_queue)
         actions: Dict[Agent, int] = {a: 0 for a in self._agents}
 
+        active_count = sum(
+            1
+            for a in self._agvs
+            if (a in self._assigned_agvs) or a.busy or a.carrying_shelf
+        )
+
         for item in request_queue:
             item_id = int(item.id)
             if item_id in self._assigned_items:
                 continue
+
+            if active_count >= (self.max_active_agvs or 0):
+                break
 
             available_agvs = [
                 a
@@ -126,6 +146,7 @@ class GraphGreedyPolicy:
                 int(item.y),
                 self._timestep,
             )
+            active_count += 1
 
         for agv in list(self._assigned_agvs.keys()):
             mission = self._assigned_agvs[agv]
