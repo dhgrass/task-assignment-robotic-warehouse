@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import tarware  # noqa: F401
 from tarware_ext.envs import TarwareAdapter
 from tarware_ext.logs import CSVLogger
-from tarware_ext.policies import HeuristicPolicy, RandomPolicy
+from tarware_ext.policies import DistanceMode, GraphGreedyPolicy, HeuristicPolicy, RandomPolicy
 from tarware_ext.runners import evaluate
 
 
@@ -28,18 +28,22 @@ def _make_env(env_id: str) -> Callable[[], TarwareAdapter]:
     return _factory
 
 
-def _build_policy(name: str, env: TarwareAdapter):
+def _build_policy(name: str, env: TarwareAdapter, distance: str | None = None):
     if name == "random":
         return RandomPolicy(env)
     if name == "heuristic":
         return HeuristicPolicy(env)
+    if name == "graph_greedy":
+        mode = DistanceMode(distance or DistanceMode.MANHATTAN.value)
+        return GraphGreedyPolicy(distance_mode=mode)
     raise ValueError(f"Unknown policy: {name}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", required=True)
-    parser.add_argument("--policy", choices=["random", "heuristic"], default="random")
+    parser.add_argument("--policy", choices=["random", "heuristic", "graph_greedy"], default="random")
+    parser.add_argument("--distance", choices=["manhattan", "find_path"], default="manhattan")
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--seed", type=int, default=None)
@@ -48,7 +52,7 @@ def main() -> None:
     args = parser.parse_args()
 
     env = TarwareAdapter(gym.make(args.env_id))
-    policy = _build_policy(args.policy, env)
+    policy = _build_policy(args.policy, env, distance=args.distance)
     env.close()
 
     eval_fn = _make_env(args.env_id)
