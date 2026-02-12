@@ -22,7 +22,11 @@ def run_episode(env: Any, policy: Any, max_steps: int, render: bool = False, see
         return policy.run_episode(env, seed=seed, render=render, max_steps=max_steps)
 
     obs, _info = env.reset(seed=seed)
-    policy.reset() if hasattr(policy, "reset") else None
+    if hasattr(policy, "reset"):
+        try:
+            policy.reset(env.unwrapped if hasattr(env, "unwrapped") else env)
+        except TypeError:
+            policy.reset()
 
     episode_returns = None
     infos = []
@@ -30,7 +34,10 @@ def run_episode(env: Any, policy: Any, max_steps: int, render: bool = False, see
     start = time.time()
 
     for _ in range(max_steps):
-        action = policy.act(obs)
+        if getattr(policy, "uses_env", False):
+            action = policy.act(env.unwrapped if hasattr(env, "unwrapped") else env)
+        else:
+            action = policy.act(obs)
         step_out = env.step(action)
 
         if isinstance(step_out, Transition):
