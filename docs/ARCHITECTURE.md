@@ -14,10 +14,23 @@ Esta guia explica, en pasos cortos, como corre un experimento con `tarware_ext` 
 2. Se selecciona la policy (random, heuristic, graph_greedy).
 3. El runner ejecuta episodios y pasos.
 4. El adapter normaliza `reset()` y `step()` en un `Transition` consistente.
+   - Soporta `step()` con 4 o 5 valores (Gym vs Gymnasium).
 5. La policy produce acciones (episodica o step-wise).
-6. Metrics calcula resumen y el logger escribe el CSV.
+6. Metrics resume el episodio y el logger escribe el CSV.
 
-## 3) Parametros clave
+## 3) Estado actual (verificado)
+
+- **TarwareAdapter + Transition**: normaliza multi-agente, reward por agente/equipo, y done por agente/todos.
+- **Runner (run_episode)**: soporta policies episodicas (`run_episode`) y step-wise (`act`).
+- **evaluate**: corre N episodios, fija seeds por episodio y produce summary agregada.
+- **metrics**: calcula deliveries, clashes, stucks, return, pick_rate y fps.
+- **scripts/eval.py**: CLI unificada + export CSV por episodio.
+- **Policies**:
+  - `HeuristicPolicy`: episodica, delega en `tarware.heuristic.heuristic_episode`.
+  - `GraphGreedyPolicy`: step-wise, usa `--distance` y limita AGVs con `--active-alpha` / `--max-active-agvs`.
+  - `RandomPolicy`: sanity check.
+
+## 4) Parametros clave
 
 - `--env-id`: define el entorno (tamano, agentes, obs).
 - `--policy`: random | heuristic | graph_greedy.
@@ -27,7 +40,7 @@ Esta guia explica, en pasos cortos, como corre un experimento con `tarware_ext` 
 - `--max-active-agvs`: limite absoluto (si se pasa, sobreescribe la regla).
 - `--csv` / `--no-csv`: salida de resultados.
 
-## 4) Diagrama Mermaid (alto nivel)
+## 5) Diagrama Mermaid (alto nivel)
 
 ```mermaid
 flowchart TB
@@ -38,7 +51,7 @@ flowchart TB
   subgraph X[tarware_ext/]
     R[Runner / rollout.py\nrollout(env, policy)]
     A[TarwareAdapter\nreset()/step() -> Transition]
-    M[Metrics / metrics.py\nupdate() + finalize()]
+    M[Metrics / metrics.py\nsummarize_episode()]
     P1[HeuristicPolicy\n(episodic)]
     P2[GraphGreedyPolicy\n(step-wise)\ndistance_mode + active_alpha]
     T[Transition (normalized)\nobs\nreward_by_agent, reward_team\ndone_by_agent, done_all\ninfo]
@@ -57,8 +70,8 @@ flowchart TB
   R --> A
   A -->|calls| ENV
   A -->|returns| T
-  R -->|updates| M
-  M -->|writes| CSV[(CSV file)]
+  R -->|summarize| M
+  M -->|writes via CSVLogger| CSV[(CSV file)]
   M -->|prints| OUT[Console summary]
 
   R -->|episodic path| P1
@@ -71,7 +84,7 @@ flowchart TB
   E -.->|--active-alpha / --max-active-agvs| P2
 ```
 
-## 5) Ejemplo rapido
+## 6) Ejemplo rapido
 
 ```bash
 python scripts/eval.py \
