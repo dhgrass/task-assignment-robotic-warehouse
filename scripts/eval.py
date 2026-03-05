@@ -35,7 +35,7 @@ def _make_env(env_id: str) -> Callable[[], TarwareAdapter]:
     return _factory
 
 
-def _build_policy(name: str, env: TarwareAdapter, distance: str | None = None):
+def _build_policy(name: str, env: TarwareAdapter, distance: str | None = None, top_k: int | None = None):
     if name == "random":
         return RandomPolicy(env)
     if name == "heuristic":
@@ -45,9 +45,9 @@ def _build_policy(name: str, env: TarwareAdapter, distance: str | None = None):
         return GraphGreedyPolicy(distance_mode=mode)
     if name == "graph_score":
         # Lightweight graph-based scoring policy (non-learning). We forward the
-        # distance mode to the underlying builder; the policy will use that
-        # information to score candidate tasks.
-        return GraphScorePolicy(distance_mode=(distance or DistanceMode.MANHATTAN.value))
+        # distance mode and candidate `top_k` to the underlying builder; the
+        # policy/builder will use that information to score candidate tasks.
+        return GraphScorePolicy(distance_mode=(distance or DistanceMode.MANHATTAN.value), top_k=top_k)
     raise ValueError(f"Unknown policy: {name}")
 
 
@@ -56,6 +56,7 @@ def main() -> None:
     parser.add_argument("--env-id", required=True)
     parser.add_argument("--policy", choices=["random", "heuristic", "graph_greedy", "graph_score"], default="random")
     parser.add_argument("--distance", choices=["manhattan", "find_path"], default="manhattan")
+    parser.add_argument("--top-k", type=int, default=2, help="Top-K candidate tasks per agent used by graph builder/policies")
     parser.add_argument("--active-alpha", type=int, default=3)
     parser.add_argument("--max-active-agvs", type=int, default=None)
     parser.add_argument("--episodes", type=int, default=5)
@@ -72,16 +73,20 @@ def main() -> None:
             args.policy,
             env,
             distance=args.distance,
+            top_k=args.top_k,
         )
         policy.active_alpha = args.active_alpha
         if args.max_active_agvs is not None:
             policy.max_active_agvs = args.max_active_agvs
     else:
-        policy = _build_policy(args.policy, env, distance=args.distance)
+        policy = _build_policy(args.policy, env, distance=args.distance, top_k=args.top_k)
     # Optionally build and print a debug graph snapshot using the builder.
     if args.debug_graph:
         try:
-            builder = getattr(policy, "builder", None) or GraphBuilderV0(distance_mode=(args.distance or DistanceMode.MANHATTAN.value))
+            builder = getattr(policy, "builder", None) or GraphBuilderV0(
+                distance_mode=(args.distance or DistanceMode.MANHATTAN.value),
+                top_k=args.top_k,
+            )
             # Safely unwrap common Gym wrappers to reach the underlying
             # `Warehouse` object expected by builders. We attempt a few
             # unwrap strategies (env.unwrapped, env.env, nested unwrapping)
@@ -114,6 +119,7 @@ def main() -> None:
                     env.reset(seed=args.seed)
             except Exception:
                 pass
+
             # If we still don't have the attributes the builder expects, try
             # an extra step via `env.env.unwrapped` as a last resort.
             if not hasattr(target_env, "agents"):
@@ -185,6 +191,7 @@ def main() -> None:
             "distance_mode",
             "active_alpha",
             "max_active_agvs",
+            "top_k",
             "episode_length",
             "shelf_deliveries",
             "clashes",
@@ -200,6 +207,7 @@ def main() -> None:
             enriched["distance_mode"] = args.distance
             enriched["active_alpha"] = args.active_alpha
             enriched["max_active_agvs"] = args.max_active_agvs
+            enriched["top_k"] = args.top_k
             logger.log({key: enriched.get(key) for key in fieldnames})
         logger.close()
 
