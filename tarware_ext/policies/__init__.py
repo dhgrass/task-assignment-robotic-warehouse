@@ -4,6 +4,7 @@ from .base import Policy
 from .graph_greedy_policy import DistanceMode, GraphGreedyPolicy
 from .heuristic_policy import HeuristicPolicy
 from .random_policy import RandomPolicy
+from .graph_score_policy import GraphScorePolicy
 
 __all__ = [
     "Policy",
@@ -11,4 +12,5 @@ __all__ = [
     "HeuristicPolicy",
     "GraphGreedyPolicy",
     "DistanceMode",
+    "GraphScorePolicy",
 ]
