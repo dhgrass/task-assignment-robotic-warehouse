@@ -82,7 +82,7 @@ class GNNPolicy:
         n_tasks = len(g.task_node_ids)
 
         if n_tasks == 0:
-            return [0 for _ in env.agents]
+            return [0 for _ in range(len(g.agent_node_ids))]
 
         # Identify AGV agent indices
         agv_indices = [i for i, nid in enumerate(g.agent_node_ids) if g.node_types[nid] == NodeType.AGV]
@@ -130,7 +130,7 @@ class GNNPolicy:
         assigned_for_agvs = self._greedy_assign(scores, valid_mask)
 
         # Map assigned tasks (agv-level) back to loc_id and build final action list
-        actions = [0 for _ in env.agents]
+        actions = [0 for _ in range(len(g.agent_node_ids))]
         for agv_pos, agv_node_idx in enumerate(g.agent_node_ids):
             if g.node_types[agv_node_idx] != NodeType.AGV:
                 continue
@@ -146,15 +146,3 @@ class GNNPolicy:
 
         return actions
 """GNN policy placeholder."""
-
-from __future__ import annotations
-
-from typing import Any
-
-
-class GNNPolicy:
-    def reset(self) -> None:
-        return None
-
-    def act(self, obs: Any) -> Any:
-        raise NotImplementedError("GNN policy not implemented yet.")
