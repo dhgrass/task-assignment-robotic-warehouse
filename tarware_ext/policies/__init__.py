@@ -5,6 +5,7 @@ from .graph_greedy_policy import DistanceMode, GraphGreedyPolicy
 from .heuristic_policy import HeuristicPolicy
 from .random_policy import RandomPolicy
 from .graph_score_policy import GraphScorePolicy
+from .gnn_policy import GNNPolicy
 
 __all__ = [
     "Policy",
@@ -13,4 +14,5 @@ __all__ = [
     "GraphGreedyPolicy",
     "DistanceMode",
     "GraphScorePolicy",
+    "GNNPolicy",
 ]
