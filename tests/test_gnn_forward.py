@@ -34,6 +34,7 @@ def test_gnn_forward_and_act():
 
     actions = policy.act(env)
     assert isinstance(actions, list)
-    assert len(actions) == len(env.agents)
+    # compare against unwrapped env agents slice to avoid wrapper attribute access
+    assert len(actions) == len(target_env.agents)
     for a in actions:
         assert isinstance(a, (int,))
