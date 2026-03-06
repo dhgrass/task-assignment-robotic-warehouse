@@ -22,6 +22,7 @@ from tarware_ext.policies import (
     HeuristicPolicy,
     RandomPolicy,
     GraphScorePolicy,
+    GNNPolicy,
 )
 from tarware_ext.runners import evaluate
 from tarware_ext.graphs.builder_v0 import GraphBuilderV0
@@ -48,13 +49,20 @@ def _build_policy(name: str, env: TarwareAdapter, distance: str | None = None, t
         # distance mode and candidate `top_k` to the underlying builder; the
         # policy/builder will use that information to score candidate tasks.
         return GraphScorePolicy(distance_mode=(distance or DistanceMode.MANHATTAN.value), top_k=top_k)
+    if name == "gnn":
+        return GNNPolicy(builder=GraphBuilderV0(distance_mode=(distance or DistanceMode.MANHATTAN.value), top_k=top_k))
+    if name == "torch_gnn":
+        # Local import to avoid requiring torch unless the user requests it
+        from tarware_ext.policies.torch_gnn_policy import TorchGNNPolicy
+
+        return TorchGNNPolicy(builder=GraphBuilderV0(distance_mode=(distance or DistanceMode.MANHATTAN.value), top_k=top_k))
     raise ValueError(f"Unknown policy: {name}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", required=True)
-    parser.add_argument("--policy", choices=["random", "heuristic", "graph_greedy", "graph_score"], default="random")
+    parser.add_argument("--policy", choices=["random", "heuristic", "graph_greedy", "graph_score", "gnn", "torch_gnn"], default="random")
     parser.add_argument("--distance", choices=["manhattan", "find_path"], default="manhattan")
     parser.add_argument("--top-k", type=int, default=2, help="Top-K candidate tasks per agent used by graph builder/policies")
     parser.add_argument("--active-alpha", type=int, default=3)
