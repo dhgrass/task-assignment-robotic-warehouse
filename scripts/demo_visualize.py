@@ -64,6 +64,12 @@ def _build_policy(name: str, env: Any, distance: str | None = None, top_k: int |
         return HeuristicPolicy(env)
     if name == "gnn":
         return GNNPolicy()
+    if name == "torch_gnn":
+        # Import locally to avoid forcing a global torch import at module load
+        from tarware_ext.policies.torch_gnn_policy import TorchGNNPolicy
+
+        # Pass a builder that respects the CLI `--top-k` flag
+        return TorchGNNPolicy(builder=GraphBuilderV0(top_k=top_k))
     raise ValueError(f"Unknown policy: {name}")
 
 
@@ -260,14 +266,19 @@ def demo(
             print("Pillow or imageio not available; install 'pillow imageio' to save annotated GIFs")
         else:
             out = Path(save_gif)
-            imageio.mimsave(str(out), frames, fps=10)
-            print(f"Saved GIF to {out}")
-            if open_gif:
-                try:
-                    # Try to open with the system default image viewer (Linux)
-                    subprocess.run(["xdg-open", str(out)], check=False)
-                except Exception as e:
-                    print(f"Unable to open GIF automatically: {e}")
+            # Ensure destination directory exists to avoid FileNotFoundError
+            out.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                imageio.mimsave(str(out), frames, fps=10)
+                print(f"Saved GIF to {out}")
+                if open_gif:
+                    try:
+                        # Try to open with the system default image viewer (Linux)
+                        subprocess.run(["xdg-open", str(out)], check=False)
+                    except Exception as e:
+                        print(f"Unable to open GIF automatically: {e}")
+            except Exception as e:
+                print(f"Unable to write GIF {out}: {e}")
 
     # If requested, hold the renderer window open until the user closes it.
     if hold_window:
@@ -303,7 +314,11 @@ def _as_seq(x: Any):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", required=True)
-    parser.add_argument("--policy", default="graph_score", choices=["graph_score", "graph_greedy", "random", "heuristic", "gnn"])
+    parser.add_argument(
+        "--policy",
+        default="graph_score",
+        choices=["graph_score", "graph_greedy", "random", "heuristic", "gnn", "torch_gnn"],
+    )
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--save-gif", type=str, default=None, help="Path to save annotated GIF (requires pillow+imageio)")
