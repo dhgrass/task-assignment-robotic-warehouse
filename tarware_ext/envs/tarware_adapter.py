@@ -112,7 +112,38 @@ class TarwareAdapter:
         )
 
     def render(self, *args: Any, **kwargs: Any) -> Any:
-        return self.env.render(*args, **kwargs)
+        try:
+            return self.env.render(*args, **kwargs)
+        except TypeError:
+            # Some Gym wrappers (e.g. OrderEnforcing) have a render() that
+            # doesn't accept keyword arguments like `mode`. Attempt to find an
+            # underlying env that supports the requested signature and call
+            # its render. Fall back to calling render without kwargs.
+            target = self.env
+            for _ in range(6):
+                try:
+                    if hasattr(target, "unwrapped") and getattr(target, "unwrapped") is not target:
+                        target = getattr(target, "unwrapped")
+                        continue
+                except Exception:
+                    pass
+                try:
+                    if hasattr(target, "env") and getattr(target, "env") is not target:
+                        target = getattr(target, "env")
+                        continue
+                except Exception:
+                    pass
+                break
+
+            # Prefer calling render on the unwrapped target with kwargs
+            try:
+                return target.render(*args, **kwargs)
+            except TypeError:
+                try:
+                    return target.render(*args)
+                except Exception:
+                    # Last resort: call wrapper's render without kwargs
+                    return self.env.render(*args)
 
     def close(self) -> None:
         self.env.close()
