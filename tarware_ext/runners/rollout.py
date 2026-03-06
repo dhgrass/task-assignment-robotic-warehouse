@@ -16,7 +16,7 @@ def _as_seq(x: Any) -> Sequence:
         return x
     return [x]
 
-
+# Note: this function is not intended to be a general-purpose rollout helper; it's designed to work with the specific policies and envs in this codebase. It can be extended or modified as needed for different use cases.
 def run_episode(env: Any, policy: Any, max_steps: int, render: bool = False, seed: int | None = None) -> Dict[str, Any]:
     if hasattr(policy, "run_episode"):
         return policy.run_episode(env, seed=seed, render=render, max_steps=max_steps)
@@ -32,7 +32,7 @@ def run_episode(env: Any, policy: Any, max_steps: int, render: bool = False, see
     infos = []
     global_episode_return = 0.0
     start = time.time()
-
+    # Note: we break on done_all, which is a heuristic for "episode over" that may not be perfectly aligned with env-specific episode termination conditions. For example, some envs may have time limits or other conditions that end the episode even if not all agents are done. In practice, this should be sufficient for most cases, but if needed, this can be made more robust by also checking env-specific info flags or conditions.
     for _ in range(max_steps):
         if getattr(policy, "uses_env", False):
             action = policy.act(env.unwrapped if hasattr(env, "unwrapped") else env)
