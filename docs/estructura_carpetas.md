@@ -41,6 +41,7 @@ tarware/
 ```
 
 ### Rol de `tarware`
+
 - Implementa el entorno base de simulacion del almacen.
 - Define espacios de observacion para distintos niveles de informacion.
 - Proporciona componentes reutilizables para heuristicas y visualizacion.
@@ -87,6 +88,7 @@ tarware_ext/
 ```
 
 ### Rol de `tarware_ext`
+
 - Agrega una capa experimental para politicas avanzadas y pipelines de entrenamiento.
 - Convierte el estado del entorno a estructuras de grafo para modelos GNN.
 - Centraliza evaluacion, metricas y logging de experimentos.
