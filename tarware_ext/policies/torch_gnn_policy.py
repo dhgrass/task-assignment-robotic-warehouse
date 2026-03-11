@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, List, Optional
 
 import numpy as np
+import torch
 
 from tarware_ext.graphs.builder_v0 import GraphBuilderV0
 from tarware_ext.graphs.serializer import graphstate_to_torch
