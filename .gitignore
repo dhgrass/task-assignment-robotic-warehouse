@@ -256,5 +256,7 @@ $RECYCLE.BIN/
 # other files
 *.json
 *.csv
+*.zip
+*.tar.gz
 
 # End of https://www.gitignore.io/api/linux,python,windows,pycharm+all,visualstudiocode
