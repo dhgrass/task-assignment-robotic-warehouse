@@ -96,3 +96,58 @@ python scripts/eval.py \
   --steps 200 \
   --csv eval_graph_greedy_large_find.csv
 ```
+
+## 7) Contrato GraphAssignmentEnv (SB3)
+
+`GraphAssignmentEnv` expone un entorno Gym de agente unico para PPO, con una tarea
+de alto nivel: asignacion explicita AGV -> request slot.
+
+- **Action space**:
+  - `MultiDiscrete([R+1] * num_agvs)`
+  - `0` = no asignar ese AGV en este paso.
+  - `1..R` = seleccionar slot del `request_queue` (indexado desde 1).
+- **Observation space** (vector fijo):
+  - Por AGV: `[y, x, busy, carrying, is_assigned, mission_type_code]`
+  - Por cada slot de request (R):
+    `[task_y, task_x, dist_this_agv, min_other_agv_dist, num_other_agvs_closer, valid_flag, is_assigned_flag]`
+  - Global: `[num_tasks, num_free_agvs, num_busy_agvs, num_assigned_requests]`
+
+Notas:
+
+- `mission_type_code`: `0=no mission`, `1=PICKING`, `2=DELIVERING`, `3=RETURNING`.
+- La alineacion accion-observacion se mantiene estricta por slot del `request_queue`.
+- **Slots fijos durante el episodio**:
+  - `R` se define en `GraphAssignmentConfig.max_request_slots`.
+  - Si no se pasa, se infiere al crear el entorno desde `request_queue_size`
+    (o longitud inicial de `request_queue` como fallback).
+
+Nota de compatibilidad:
+
+- `GraphAssignmentConfig.top_k` se mantiene solo como alias deprecado para
+  `max_request_slots`.
+
+- `GraphAssignmentConfig.obs_backend` permite elegir backend de observacion:
+  - `assignment`: encoder directo desde env/controller (A).
+  - `graph`: builder/proyeccion/encoder basados en `GraphState` (B).
+
+## 8) Benchmark PPO vs Heuristica (assignment)
+
+Para comparar `GraphAssignmentEnv` + PPO contra la heuristica baseline en
+small/medium/large:
+
+```bash
+python scripts/benchmark_sb3_assignment.py \
+  --env-ids tarware-small-2agvs-1pickers-globalobs-v1 tarware-medium-4agvs-2pickers-globalobs-v1 tarware-large-8agvs-4pickers-globalobs-v1 \
+  --seeds 21 22 23 \
+  --timesteps 20000 \
+  --eval-episodes 10 \
+  --steps 200 \
+  --obs-backend assignment \
+  --max-request-slots 20 \
+  --csv eval/sb3_assignment_benchmark.csv
+```
+
+Notas de comparacion justa:
+
+- Usa el mismo `--steps` para heuristica y PPO (el script ya los alinea).
+- Usa multiples seeds y suficientes episodios para reducir varianza.
