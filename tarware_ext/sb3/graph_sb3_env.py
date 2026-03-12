@@ -4,19 +4,10 @@
 """
 Graph-wrapped Gymnasium env for SB3 PPO (MVP).
 
-- Under the hood: TA-RWARE (gym.make) wrapped by TarwareAdapter.
-- Each reset/step: build GraphState using GraphBuilderV0(top_k=K).
-- Observation: fixed vector using encode_graph_obs (feature engineering).
-- Action: MultiDiscrete([K+1]*num_agvs), each AGV selects a candidate task:
-    0 = idle
-    1..K = pick candidate index
-  Internally this is translated to TA-RWARE macro actions (loc_id per agent).
+SB3 controls only AGVs (RL). Pickers follow a simple step-wise heuristic:
+they move to the same loc_id targets selected for AGVs, using rack sections.
 
-We start controlling only AGVs. Pickers stay idle (0) for MVP simplicity.
-
-This version adds:
-- Better debug logs (action -> task_idx -> loc_id) for first steps.
-- Episode MRTA metrics in info["episode"] so SB3 logs are meaningful.
+Why: If pickers stay idle in tarware-small-* envs, deliveries usually remain 0.
 """
 
 from __future__ import annotations
@@ -27,11 +18,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import gymnasium as gym
 import numpy as np
 
-import tarware  # noqa: F401  # registers envs
+import tarware  # noqa: F401
 
 from tarware_ext.envs.tarware_adapter import TarwareAdapter, Transition
 from tarware_ext.graphs.builder_v0 import GraphBuilderV0
 from tarware_ext.graphs.schema import GraphState, NodeType
+
+# Reuse the same split helpers used by GraphGreedyPolicy (step-wise heuristic)
+from tarware.utils.utils import flatten_list, split_list  # type: ignore
+
 from tarware_ext.sb3.graph_obs_encoder import GraphObsSpec, encode_graph_obs
 
 
@@ -43,11 +38,18 @@ class GraphSB3Config:
     seed: Optional[int] = None
     distance_mode: str = "manhattan"
     verbose: bool = False
-    debug_first_n_steps: int = 3  # why: avoid flooding console
+    debug_first_n_steps: int = 3  # evita spamear consola
 
 
 class GraphSB3Env(gym.Env):
-    """Single-agent interface controlling multiple agents internally (centralized control)."""
+    """
+    Single-agent interface controlling multiple agents internally (centralized control).
+
+    Action space (SB3): MultiDiscrete([K+1]*num_agvs)
+      - 0 = idle
+      - 1..K = choose candidate task
+    Internally we translate to TA-RWARE actions: loc_id per agent (AGVs + pickers).
+    """
 
     metadata = {"render_modes": ["human", "rgb_array"]}
 
@@ -56,7 +58,7 @@ class GraphSB3Env(gym.Env):
         self.cfg = config
         self._t = 0
 
-        base = gym.make(self.cfg.env_id)
+        base = gym.make(self.cfg.env_id, disable_env_checker=True)  # reduce warnings
         self.env = TarwareAdapter(base)
         self.builder = GraphBuilderV0(distance_mode=self.cfg.distance_mode, top_k=self.cfg.top_k)
 
@@ -84,18 +86,25 @@ class GraphSB3Env(gym.Env):
         self._last_graph: Optional[GraphState] = g
         self._last_obs: np.ndarray = encode_graph_obs(g, self.obs_spec)
 
-        # Episode accumulators (for SB3 "episode" info + MRTA metrics)
-        self._ep_return: float = 0.0
-        self._ep_len: int = 0
-        self._ep_deliveries: int = 0
-        self._ep_clashes: int = 0
-        self._ep_stucks: int = 0
+        # For picker heuristic (zones/sections)
+        self._agents: List[Any] = []
+        self._pickers: List[Any] = []
+        self._picker_sections: List[List[Tuple[int, int]]] = []
+        self._loc_to_yx: Dict[int, Tuple[int, int]] = {}
 
-        # Debug: keep last mapping action -> (task_idx, loc_id)
+        # Episode counters (optional; you already added in your previous patch)
+        self._ep_return = 0.0
+        self._ep_len = 0
+        self._ep_deliveries = 0
+        self._ep_clashes = 0
+        self._ep_stucks = 0
+
         self._last_debug_mapping: Dict[str, Any] = {}
 
+        # Build initial picker sections
+        self._refresh_picker_layout(target_env)
+
     def _unwrap_env(self) -> Any:
-        """Extract the underlying Warehouse-like env."""
         cand: Any = self.env
         for _ in range(6):
             if hasattr(cand, "unwrapped") and getattr(cand, "unwrapped") is not cand:
@@ -106,6 +115,28 @@ class GraphSB3Env(gym.Env):
                 continue
             break
         return cand
+
+    def _refresh_picker_layout(self, unwrapped_env: Any) -> None:
+        """
+        Precompute:
+          - list of pickers
+          - rack sections per picker (like GraphGreedyPolicy)
+          - loc_id -> (y,x) map
+        """
+        self._agents = list(getattr(unwrapped_env, "agents", []))
+        self._pickers = [a for a in self._agents if getattr(a, "type", None).name == "PICKER"]  # AgentType.PICKER
+
+        self._loc_to_yx = dict(getattr(unwrapped_env, "action_id_to_coords_map", {}))
+
+        sections = list(getattr(unwrapped_env, "rack_groups", []))
+        if not self._pickers:
+            self._picker_sections = []
+            return
+
+        picker_sections = split_list(sections, max(1, len(self._pickers)))
+        picker_sections = [flatten_list(l) for l in picker_sections]
+        # Each section is a list of coords (y,x)
+        self._picker_sections = picker_sections
 
     def reset(self, *, seed: int | None = None, options: dict | None = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         self._t = 0
@@ -118,7 +149,10 @@ class GraphSB3Env(gym.Env):
 
         _obs, info = self.env.reset(seed=seed if seed is not None else self.cfg.seed, options=options)
 
-        g = self.builder.build(self._unwrap_env())
+        unwrapped = self._unwrap_env()
+        self._refresh_picker_layout(unwrapped)
+
+        g = self.builder.build(unwrapped)
         self._last_graph = g
         self._last_obs = encode_graph_obs(g, self.obs_spec)
 
@@ -127,12 +161,52 @@ class GraphSB3Env(gym.Env):
 
         return self._last_obs.copy(), info if isinstance(info, dict) else {}
 
+    def _assign_pickers_to_agv_targets(self, actions_all: List[int]) -> None:
+        """
+        Simple step-wise picker heuristic:
+        - For each AGV target loc_id != 0, send the corresponding zone picker to same loc_id.
+        - If multiple AGVs target same zone, first one wins.
+        """
+        if not self._pickers or not self._picker_sections:
+            return
+
+        # Track which pickers already assigned this step
+        used_picker_idxs: set[int] = set()
+
+        # Determine AGV targets (loc_id) from actions_all
+        for agent_idx, loc_id in enumerate(actions_all):
+            if loc_id <= 0:
+                continue
+
+            yx = self._loc_to_yx.get(int(loc_id))
+            if yx is None:
+                continue
+
+            # Find picker zone for this (y,x)
+            picker_idx = None
+            for i, section in enumerate(self._picker_sections):
+                if (int(yx[0]), int(yx[1])) in section:
+                    picker_idx = i
+                    break
+
+            if picker_idx is None or picker_idx in used_picker_idxs:
+                continue
+
+            # Map picker index to env agent index: assume pickers appear in env.agents order
+            picker_agent = self._pickers[picker_idx]
+            try:
+                picker_agent_idx = self._agents.index(picker_agent)
+            except ValueError:
+                continue
+
+            actions_all[picker_agent_idx] = int(loc_id)
+            used_picker_idxs.add(picker_idx)
+
     def _translate_action_to_loc_ids(self, action: np.ndarray) -> List[int]:
         """
-        Convert SB3 action (per-AGV candidate choice) to TA-RWARE actions (loc_id per agent).
-
-        Also stores debug mapping in self._last_debug_mapping:
-          sb3_action -> chosen task_idx -> chosen loc_id (per AGV)
+        SB3 action -> loc_id per env agent.
+        - AGVs from SB3 (top-k mapping)
+        - Pickers from heuristic that follows AGV targets (zone-based)
         """
         self._last_debug_mapping = {
             "sb3_action": [int(x) for x in np.asarray(action).tolist()],
@@ -150,7 +224,7 @@ class GraphSB3Env(gym.Env):
 
         actions_all = [0 for _ in range(self.num_agents)]
 
-        # Assumption (MVP): g.agent_node_ids order matches env.agents order
+        # AGVs from SB3
         agv_counter = 0
         for agent_idx, nid in enumerate(g.agent_node_ids):
             if g.node_types[int(nid)] != NodeType.AGV:
@@ -176,14 +250,13 @@ class GraphSB3Env(gym.Env):
             self._last_debug_mapping["chosen_loc_ids"].append(int(chosen_loc))
             agv_counter += 1
 
-        # Pickers: idle in MVP (0). Later you can add a heuristic here.
+        # Pickers follow AGV targets (heuristic)
+        self._assign_pickers_to_agv_targets(actions_all)
         return actions_all
 
     def _update_episode_counters(self, reward: float, info: Dict[str, Any]) -> None:
         self._ep_len += 1
         self._ep_return += float(reward)
-
-        # Align with run_heuristic.py semantics if keys exist
         if "shelf_deliveries" in info:
             self._ep_deliveries += int(info.get("shelf_deliveries", 0))
         if "clashes" in info:
@@ -192,17 +265,13 @@ class GraphSB3Env(gym.Env):
             self._ep_stucks += int(info.get("stucks", 0))
 
     def _attach_episode_info(self, info: Dict[str, Any]) -> Dict[str, Any]:
-        # SB3 logs episode info if present under key "episode"
-        # We include MRTA metrics for interpretability.
         episode_length = max(self._ep_len, 1)
         pick_rate = float(self._ep_deliveries) * 3600.0 / (5.0 * float(episode_length))
 
         info = dict(info) if isinstance(info, dict) else {}
         info["episode"] = {
-            # SB3 standard keys
             "r": float(self._ep_return),
             "l": int(self._ep_len),
-            # Extra MRTA metrics
             "deliveries": int(self._ep_deliveries),
             "clashes": int(self._ep_clashes),
             "stucks": int(self._ep_stucks),
@@ -228,20 +297,17 @@ class GraphSB3Env(gym.Env):
             truncated = bool(truncated_raw)
             info = info if isinstance(info, dict) else {}
 
-        # Episode accumulators (so we can log MRTA metrics per episode)
         self._update_episode_counters(reward=reward, info=info)
 
-        # Update graph snapshot and obs
-        g = self.builder.build(self._unwrap_env())
+        unwrapped = self._unwrap_env()
+        g = self.builder.build(unwrapped)
         self._last_graph = g
         obs_vec = encode_graph_obs(g, self.obs_spec)
         self._last_obs = obs_vec
 
-        # Time truncation
         if self._t >= self.cfg.max_steps:
             truncated = True
 
-        # Debug: mapping action->task->loc_id on first steps
         if self.cfg.verbose and self._t <= self.cfg.debug_first_n_steps:
             print(
                 f"[map] t={self._t} sb3_action={self._last_debug_mapping.get('sb3_action')} "
@@ -249,7 +315,6 @@ class GraphSB3Env(gym.Env):
                 f"chosen_loc_ids={self._last_debug_mapping.get('chosen_loc_ids')}"
             )
 
-        # End-of-episode: attach info["episode"] for SB3 logs
         if terminated or truncated:
             info = self._attach_episode_info(info)
 
@@ -258,7 +323,7 @@ class GraphSB3Env(gym.Env):
                 f"[step] t={self._t} reward={reward:.3f} term={terminated} trunc={truncated} "
                 f"tasks={len(g.task_node_ids)}"
             )
-            if (terminated or truncated) and isinstance(info, dict) and "episode" in info:
+            if (terminated or truncated) and "episode" in info:
                 ep = info["episode"]
                 print(
                     f"[episode] len={ep.get('l')} return={ep.get('r'):.3f} "
