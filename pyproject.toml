@@ -31,3 +31,6 @@ sb3 = ["stable-baselines3"]
 
 [project.urls]
 Repository  = "https://github.com/raulsteleac/task-assignment-robotic-warehouse.git"
+
+[tool.setuptools.packages.find]
+include = ["tarware*", "tarware_ext*"]
