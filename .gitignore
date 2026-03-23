@@ -259,5 +259,6 @@ $RECYCLE.BIN/
 *.zip
 *.tar.gz
 *.pdf
-
+*.jpg
+*.jpeg
 # End of https://www.gitignore.io/api/linux,python,windows,pycharm+all,visualstudiocode
