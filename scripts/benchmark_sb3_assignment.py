@@ -108,6 +108,7 @@ def _train_ppo(
     max_request_slots: int | None,
     obs_backend: str,
     graph_encoder_mode: str,
+    graph_gnn_arch: str,
     train_verbose: int,
 ) -> Any:
     from stable_baselines3 import PPO
@@ -117,6 +118,7 @@ def _train_ppo(
             env_id=env_id,
             obs_backend=obs_backend,
             graph_encoder_mode=graph_encoder_mode,
+            graph_gnn_arch=graph_gnn_arch,
             max_request_slots=max_request_slots,
             max_steps=steps,
             seed=seed,
@@ -140,6 +142,7 @@ def _eval_ppo(
     max_request_slots: int | None,
     obs_backend: str,
     graph_encoder_mode: str,
+    graph_gnn_arch: str,
 ) -> List[Dict[str, float]]:
     out: List[Dict[str, float]] = []
     env = GraphAssignmentEnv(
@@ -147,6 +150,7 @@ def _eval_ppo(
             env_id=env_id,
             obs_backend=obs_backend,
             graph_encoder_mode=graph_encoder_mode,
+            graph_gnn_arch=graph_gnn_arch,
             max_request_slots=max_request_slots,
             max_steps=steps,
             seed=seed,
@@ -192,6 +196,7 @@ def main() -> None:
     p.add_argument("--steps", type=int, default=200)
     p.add_argument("--obs-backend", choices=["assignment", "graph"], default="assignment")
     p.add_argument("--graph-encoder-mode", choices=["manual", "gnn"], default="manual")
+    p.add_argument("--graph-gnn-arch", choices=["sage", "gcn", "gat"], default="sage")
     p.add_argument("--max-request-slots", type=int, default=None)
     p.add_argument("--train-verbose", type=int, default=0)
     p.add_argument("--csv", type=str, default="")
@@ -224,6 +229,7 @@ def main() -> None:
                 max_request_slots=args.max_request_slots,
                 obs_backend=args.obs_backend,
                 graph_encoder_mode=args.graph_encoder_mode,
+                graph_gnn_arch=args.graph_gnn_arch,
                 train_verbose=args.train_verbose,
             )
             ppo_rows.extend(
@@ -236,6 +242,7 @@ def main() -> None:
                     max_request_slots=args.max_request_slots,
                     obs_backend=args.obs_backend,
                     graph_encoder_mode=args.graph_encoder_mode,
+                    graph_gnn_arch=args.graph_gnn_arch,
                 )
             )
 
