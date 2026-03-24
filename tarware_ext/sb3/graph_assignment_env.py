@@ -39,6 +39,7 @@ class GraphAssignmentConfig:
     distance_mode: str = "manhattan"
     obs_backend: str = "assignment"  # "assignment" (A) or "graph" (B)
     graph_encoder_mode: str = "manual"  # "manual" or "gnn" when obs_backend="graph"
+    graph_gnn_arch: str = "sage"  # "sage", "gcn" or "gat" when graph_encoder_mode="gnn"
     verbose: bool = False
     debug_first_n_steps: int = 3
 
@@ -62,6 +63,10 @@ class GraphAssignmentEnv(gym.Env):
         self._graph_encoder_mode = str(self.cfg.graph_encoder_mode).strip().lower()
         if self._graph_encoder_mode not in ("manual", "gnn"):
             raise ValueError("GraphAssignmentConfig.graph_encoder_mode must be 'manual' or 'gnn'.")
+
+        self._graph_gnn_arch = str(self.cfg.graph_gnn_arch).strip().lower()
+        if self._graph_gnn_arch not in ("sage", "gcn", "gat"):
+            raise ValueError("GraphAssignmentConfig.graph_gnn_arch must be 'sage', 'gcn' or 'gat'.")
 
         self._agv_feat_dim = 6
         self._slot_feat_dim = 7
@@ -155,6 +160,7 @@ class GraphAssignmentEnv(gym.Env):
                 slot_feat_dim=self._slot_feat_dim,
                 global_feat_dim=self._global_feat_dim,
                 encoder_mode=self._graph_encoder_mode,
+                gnn_arch=self._graph_gnn_arch,
             )
 
         return encode_assignment_obs(
