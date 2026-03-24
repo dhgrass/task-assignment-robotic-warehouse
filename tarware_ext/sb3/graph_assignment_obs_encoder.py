@@ -59,8 +59,8 @@ def _encode_graph_assignment_obs_manual(
     return obs
 
 
-def _get_cached_gnn_model(node_feature_dim: int):
-    key = int(node_feature_dim)
+def _get_cached_gnn_model(node_feature_dim: int, gnn_arch: str):
+    key = (int(node_feature_dim), str(gnn_arch).strip().lower())
     model = _GNN_MODEL_CACHE.get(key)
     if model is not None:
         return model
@@ -69,7 +69,7 @@ def _get_cached_gnn_model(node_feature_dim: int):
     import torch
 
     torch.manual_seed(0)
-    model = build_default_gnn_for_assignment(node_feature_dim=node_feature_dim)
+    model = build_default_gnn_for_assignment(node_feature_dim=node_feature_dim, architecture=gnn_arch)
     model.eval()
     _GNN_MODEL_CACHE[key] = model
     return model
@@ -84,11 +84,12 @@ def _encode_graph_assignment_obs_gnn(
     agv_feat_dim: int,
     slot_feat_dim: int,
     global_feat_dim: int,
+    gnn_arch: str,
 ) -> np.ndarray:
     from tarware_ext.graphs.gnn_minimal import GraphBatch
     import torch
 
-    model = _get_cached_gnn_model(node_feature_dim=int(graph.node_features.shape[1]))
+    model = _get_cached_gnn_model(node_feature_dim=int(graph.node_features.shape[1]), gnn_arch=gnn_arch)
     batch = GraphBatch.from_graph_state(graph)
 
     with torch.no_grad():
@@ -181,6 +182,7 @@ def encode_graph_assignment_obs(
     slot_feat_dim: int = 7,
     global_feat_dim: int = 4,
     encoder_mode: str = "manual",
+    gnn_arch: str = "sage",
 ) -> np.ndarray:
     """Encode assignment GraphState into fixed-size PPO observation vector."""
     mode = str(encoder_mode).strip().lower()
@@ -207,6 +209,7 @@ def encode_graph_assignment_obs(
             agv_feat_dim=agv_feat_dim,
             slot_feat_dim=slot_feat_dim,
             global_feat_dim=global_feat_dim,
+            gnn_arch=gnn_arch,
         )
     except Exception as exc:
         warnings.warn(
