@@ -109,6 +109,9 @@ def _train_ppo(
     obs_backend: str,
     graph_encoder_mode: str,
     graph_gnn_arch: str,
+    gnn_emb_dim: int,
+    gnn_layers: int,
+    gnn_dropout: float,
     train_verbose: int,
 ) -> Any:
     from stable_baselines3 import PPO
@@ -126,7 +129,27 @@ def _train_ppo(
         )
     )
     try:
-        model = PPO("MlpPolicy", train_env, verbose=train_verbose, seed=seed)
+        if obs_backend == "graph_dict":
+            from tarware_ext.sb3.gnn_feature_extractor import GnnFeatureExtractor
+
+            model = PPO(
+                "MultiInputPolicy",
+                train_env,
+                policy_kwargs={
+                    "features_extractor_class": GnnFeatureExtractor,
+                    "features_extractor_kwargs": {
+                        "emb_dim": int(gnn_emb_dim),
+                        "gnn_layers": int(gnn_layers),
+                        "dropout": float(gnn_dropout),
+                        "architecture": str(graph_gnn_arch).strip().lower(),
+                    },
+                },
+                verbose=train_verbose,
+                seed=seed,
+            )
+        else:
+            model = PPO("MlpPolicy", train_env, verbose=train_verbose, seed=seed)
+
         model.learn(total_timesteps=timesteps)
         return model
     finally:
@@ -194,9 +217,12 @@ def main() -> None:
     p.add_argument("--eval-episodes", type=int, default=10)
     p.add_argument("--timesteps", type=int, default=10_000)
     p.add_argument("--steps", type=int, default=200)
-    p.add_argument("--obs-backend", choices=["assignment", "graph"], default="assignment")
+    p.add_argument("--obs-backend", choices=["assignment", "graph", "graph_dict"], default="assignment")
     p.add_argument("--graph-encoder-mode", choices=["manual", "gnn"], default="manual")
     p.add_argument("--graph-gnn-arch", choices=["sage", "gcn", "gat"], default="sage")
+    p.add_argument("--gnn-emb-dim", type=int, default=64)
+    p.add_argument("--gnn-layers", type=int, default=2)
+    p.add_argument("--gnn-dropout", type=float, default=0.0)
     p.add_argument("--max-request-slots", type=int, default=None)
     p.add_argument("--train-verbose", type=int, default=0)
     p.add_argument("--csv", type=str, default="")
@@ -230,6 +256,9 @@ def main() -> None:
                 obs_backend=args.obs_backend,
                 graph_encoder_mode=args.graph_encoder_mode,
                 graph_gnn_arch=args.graph_gnn_arch,
+                gnn_emb_dim=args.gnn_emb_dim,
+                gnn_layers=args.gnn_layers,
+                gnn_dropout=args.gnn_dropout,
                 train_verbose=args.train_verbose,
             )
             ppo_rows.extend(
