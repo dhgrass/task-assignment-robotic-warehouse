@@ -37,7 +37,7 @@ class GraphAssignmentConfig:
     max_steps: int = 200
     seed: Optional[int] = None
     distance_mode: str = "manhattan"
-    obs_backend: str = "assignment"  # "assignment" (A) or "graph" (B)
+    obs_backend: str = "assignment"  # "assignment" (A), "graph" (B) or "graph_dict" (C)
     graph_encoder_mode: str = "manual"  # "manual" or "gnn" when obs_backend="graph"
     graph_gnn_arch: str = "sage"  # "sage", "gcn" or "gat" when graph_encoder_mode="gnn"
     verbose: bool = False
@@ -55,9 +55,9 @@ class GraphAssignmentEnv(gym.Env):
         self._t = 0
 
         self._obs_backend = str(self.cfg.obs_backend).strip().lower()
-        if self._obs_backend not in ("assignment", "graph"):
+        if self._obs_backend not in ("assignment", "graph", "graph_dict"):
             raise ValueError(
-                "GraphAssignmentConfig.obs_backend must be 'assignment' or 'graph'."
+                "GraphAssignmentConfig.obs_backend must be 'assignment', 'graph' or 'graph_dict'."
             )
 
         self._graph_encoder_mode = str(self.cfg.graph_encoder_mode).strip().lower()
@@ -71,6 +71,8 @@ class GraphAssignmentEnv(gym.Env):
         self._agv_feat_dim = 6
         self._slot_feat_dim = 7
         self._global_feat_dim = 4
+        self._graph_node_feat_dim = 6
+        self._graph_edge_feat_dim = 2
 
         base = gym.make(self.cfg.env_id, disable_env_checker=True)
         # Keep per-agent done semantics so we can build proper terminated/truncated.
@@ -110,21 +112,121 @@ class GraphAssignmentEnv(gym.Env):
 
         self.max_request_slots = max(1, int(configured_slots))
 
-        obs_dim = (
-            self.num_agvs * (self._agv_feat_dim + self.max_request_slots * self._slot_feat_dim)
-            + self._global_feat_dim
-        )
-        self.observation_space = gym.spaces.Box(
-            low=-1e9,
-            high=1e9,
-            shape=(obs_dim,),
-            dtype=np.float32,
-        )
+        if self._obs_backend == "graph_dict":
+            graph0 = self.graph_builder.build(unwrapped, controller=self.controller)
+            self._graph_node_feat_dim = int(graph0.node_features.shape[1])
+
+            edge_attr0 = graph0.metadata.get("edge_attr") if isinstance(graph0.metadata, dict) else None
+            if edge_attr0 is not None and getattr(edge_attr0, "ndim", 0) == 2 and edge_attr0.shape[1] > 0:
+                self._graph_edge_feat_dim = int(edge_attr0.shape[1])
+
+            self._graph_max_nodes = int(self.num_agents + self.max_request_slots)
+            self._graph_max_edges = int(self.num_agvs * self.max_request_slots)
+
+            self.observation_space = gym.spaces.Dict(
+                {
+                    "node_features": gym.spaces.Box(
+                        low=-1e9,
+                        high=1e9,
+                        shape=(self._graph_max_nodes, self._graph_node_feat_dim),
+                        dtype=np.float32,
+                    ),
+                    "edge_index": gym.spaces.Box(
+                        low=0,
+                        high=max(self._graph_max_nodes - 1, 0),
+                        shape=(2, self._graph_max_edges),
+                        dtype=np.int32,
+                    ),
+                    "edge_attr": gym.spaces.Box(
+                        low=-1e9,
+                        high=1e9,
+                        shape=(self._graph_max_edges, self._graph_edge_feat_dim),
+                        dtype=np.float32,
+                    ),
+                    "action_mask": gym.spaces.Box(
+                        low=0,
+                        high=1,
+                        shape=(self.num_agvs, self.max_request_slots),
+                        dtype=np.int8,
+                    ),
+                    "n_nodes": gym.spaces.Box(low=0, high=self._graph_max_nodes, shape=(1,), dtype=np.int32),
+                    "n_edges": gym.spaces.Box(low=0, high=self._graph_max_edges, shape=(1,), dtype=np.int32),
+                    "n_tasks": gym.spaces.Box(low=0, high=self.max_request_slots, shape=(1,), dtype=np.int32),
+                }
+            )
+        else:
+            obs_dim = (
+                self.num_agvs * (self._agv_feat_dim + self.max_request_slots * self._slot_feat_dim)
+                + self._global_feat_dim
+            )
+            self.observation_space = gym.spaces.Box(
+                low=-1e9,
+                high=1e9,
+                shape=(obs_dim,),
+                dtype=np.float32,
+            )
 
         # Explicit AGV assignment: 0=no assignment, 1..R=request_queue slot.
         self.action_space = gym.spaces.MultiDiscrete([self.max_request_slots + 1] * self.num_agvs)
 
-        self._last_obs: np.ndarray = self._encode_obs(unwrapped)
+        self._last_obs: Any = self._encode_obs(unwrapped)
+
+    def _resolve_agv_action_mask_rows(self, graph: Any) -> List[int]:
+        if getattr(graph, "action_mask", None) is None:
+            return []
+
+        agv_rows = []
+        metadata = graph.metadata if isinstance(graph.metadata, dict) else {}
+        raw = metadata.get("agv_agent_indices")
+        if isinstance(raw, list):
+            for idx in raw:
+                i = int(idx)
+                if 0 <= i < graph.action_mask.shape[0]:
+                    agv_rows.append(i)
+        return agv_rows
+
+    def _encode_graph_dict_obs(self, env: Any) -> Dict[str, np.ndarray]:
+        graph = self.graph_builder.build(env, controller=self.controller)
+
+        node_features = np.zeros(
+            (self._graph_max_nodes, self._graph_node_feat_dim),
+            dtype=np.float32,
+        )
+        n_nodes = min(int(graph.node_features.shape[0]), self._graph_max_nodes)
+        if n_nodes > 0:
+            node_features[:n_nodes, :] = graph.node_features[:n_nodes, : self._graph_node_feat_dim].astype(np.float32)
+
+        edge_index = np.zeros((2, self._graph_max_edges), dtype=np.int32)
+        n_edges_raw = int(graph.edge_index.shape[1]) if graph.edge_index.ndim == 2 else 0
+        n_edges = min(n_edges_raw, self._graph_max_edges)
+        if n_edges > 0:
+            clipped = np.clip(graph.edge_index[:, :n_edges], 0, max(n_nodes - 1, 0))
+            edge_index[:, :n_edges] = clipped.astype(np.int32)
+
+        edge_attr = np.zeros((self._graph_max_edges, self._graph_edge_feat_dim), dtype=np.float32)
+        edge_attr_raw = graph.metadata.get("edge_attr") if isinstance(graph.metadata, dict) else None
+        if edge_attr_raw is not None and getattr(edge_attr_raw, "ndim", 0) == 2:
+            copy_edges = min(n_edges, int(edge_attr_raw.shape[0]))
+            if copy_edges > 0:
+                edge_attr[:copy_edges, :] = edge_attr_raw[:copy_edges, : self._graph_edge_feat_dim].astype(np.float32)
+
+        action_mask = np.zeros((self.num_agvs, self.max_request_slots), dtype=np.int8)
+        agv_rows = self._resolve_agv_action_mask_rows(graph)
+        n_tasks = min(int(len(graph.task_node_ids)), self.max_request_slots)
+        for i, row_idx in enumerate(agv_rows[: self.num_agvs]):
+            if n_tasks <= 0:
+                break
+            action_mask[i, :n_tasks] = graph.action_mask[int(row_idx), :n_tasks].astype(np.int8)
+
+        return {
+            "node_features": node_features,
+            "edge_index": edge_index,
+            "edge_attr": edge_attr,
+            "action_mask": action_mask,
+            "n_nodes": np.array([n_nodes], dtype=np.int32),
+            "n_edges": np.array([n_edges], dtype=np.int32),
+            "n_tasks": np.array([n_tasks], dtype=np.int32),
+        }
 
     def _unwrap_env(self) -> Any:
         cand: Any = self.env
@@ -148,7 +250,10 @@ class GraphAssignmentEnv(gym.Env):
         if "stucks" in info:
             self._ep_stucks += int(info.get("stucks", 0))
 
-    def _encode_obs(self, env: Any) -> np.ndarray:
+    def _encode_obs(self, env: Any) -> Any:
+        if self._obs_backend == "graph_dict":
+            return self._encode_graph_dict_obs(env)
+
         if self._obs_backend == "graph":
             graph = self.graph_builder.build(env, controller=self.controller)
             return encode_graph_assignment_obs(
@@ -189,7 +294,7 @@ class GraphAssignmentEnv(gym.Env):
         }
         return out
 
-    def reset(self, *, seed: int | None = None, options: dict | None = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+    def reset(self, *, seed: int | None = None, options: dict | None = None) -> Tuple[Any, Dict[str, Any]]:
         self._t = 0
         self._ep_return = 0.0
         self._ep_len = 0
@@ -209,9 +314,13 @@ class GraphAssignmentEnv(gym.Env):
                 f"num_agvs={self.num_agvs} request_slots={self.max_request_slots}"
             )
 
-        return self._last_obs.copy(), info if isinstance(info, dict) else {}
+        if isinstance(self._last_obs, dict):
+            out_obs = {k: v.copy() for k, v in self._last_obs.items()}
+        else:
+            out_obs = self._last_obs.copy()
+        return out_obs, info if isinstance(info, dict) else {}
 
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+    def step(self, action: np.ndarray) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
         self._t += 1
 
         assignments = [int(x) for x in np.asarray(action).reshape(-1).tolist()]
@@ -259,7 +368,11 @@ class GraphAssignmentEnv(gym.Env):
                 f"tasks={len(getattr(self._unwrap_env(), 'request_queue', []))}"
             )
 
-        return obs_vec.copy(), reward, terminated, truncated, info
+        if isinstance(obs_vec, dict):
+            out_obs = {k: v.copy() for k, v in obs_vec.items()}
+        else:
+            out_obs = obs_vec.copy()
+        return out_obs, reward, terminated, truncated, info
 
     def render(self) -> Any:
         return self.env.render()
