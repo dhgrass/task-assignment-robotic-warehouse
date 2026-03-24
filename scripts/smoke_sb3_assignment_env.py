@@ -19,7 +19,7 @@ from tarware_ext.sb3 import GraphAssignmentConfig, GraphAssignmentEnv
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--env-id", required=True)
+    p.add_argument("--env-id", default="tarware-small-2agvs-1pickers-globalobs-v1")
     p.add_argument("--obs-backend", choices=["assignment", "graph"], default="assignment")
     p.add_argument("--max-request-slots", type=int, default=None)
     p.add_argument("--top-k", type=int, default=None, help="Deprecated alias of --max-request-slots")
