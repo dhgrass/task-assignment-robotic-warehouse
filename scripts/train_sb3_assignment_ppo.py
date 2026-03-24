@@ -22,6 +22,7 @@ def main() -> None:
     p.add_argument("--env-id", required=True)
     p.add_argument("--obs-backend", choices=["assignment", "graph"], default="assignment")
     p.add_argument("--graph-encoder-mode", choices=["manual", "gnn"], default="manual")
+    p.add_argument("--graph-gnn-arch", choices=["sage", "gcn", "gat"], default="sage")
     p.add_argument("--max-request-slots", type=int, default=None)
     p.add_argument("--top-k", type=int, default=None, help="Deprecated alias of --max-request-slots")
     p.add_argument("--steps", type=int, default=200)
@@ -42,6 +43,7 @@ def main() -> None:
             env_id=args.env_id,
             obs_backend=args.obs_backend,
             graph_encoder_mode=args.graph_encoder_mode,
+            graph_gnn_arch=args.graph_gnn_arch,
             max_request_slots=max_request_slots,
             max_steps=args.steps,
             seed=args.seed,
