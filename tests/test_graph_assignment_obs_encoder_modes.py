@@ -47,7 +47,8 @@ def test_encode_graph_assignment_obs_manual_shape_and_finite() -> None:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch is required")
-def test_encode_graph_assignment_obs_gnn_shape_and_finite() -> None:
+@pytest.mark.parametrize("gnn_arch", ["sage", "gcn", "gat"])
+def test_encode_graph_assignment_obs_gnn_shape_and_finite(gnn_arch: str) -> None:
     env = gym.make("tarware-small-2agvs-1pickers-globalobs-v1", disable_env_checker=True)
     try:
         env.reset(seed=21)
@@ -63,6 +64,7 @@ def test_encode_graph_assignment_obs_gnn_shape_and_finite() -> None:
             slot_feat_dim=7,
             global_feat_dim=4,
             encoder_mode="gnn",
+            gnn_arch=gnn_arch,
         )
 
         assert obs.shape == obs_shape
