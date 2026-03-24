@@ -21,6 +21,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--env-id", default="tarware-small-2agvs-1pickers-globalobs-v1")
     p.add_argument("--obs-backend", choices=["assignment", "graph"], default="assignment")
+    p.add_argument("--graph-encoder-mode", choices=["manual", "gnn"], default="manual")
     p.add_argument("--max-request-slots", type=int, default=None)
     p.add_argument("--top-k", type=int, default=None, help="Deprecated alias of --max-request-slots")
     p.add_argument("--steps", type=int, default=100)
@@ -34,6 +35,7 @@ def main() -> None:
         GraphAssignmentConfig(
             env_id=args.env_id,
             obs_backend=args.obs_backend,
+            graph_encoder_mode=args.graph_encoder_mode,
             max_request_slots=max_request_slots,
             max_steps=args.steps,
             seed=args.seed,
