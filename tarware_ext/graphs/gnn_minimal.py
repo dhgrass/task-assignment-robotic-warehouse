@@ -1,7 +1,12 @@
-"""Minimal GNN blocks for assignment over GraphState.
+"""Minimal pluggable GNN blocks for assignment over GraphState.
 
-This module is intentionally small and dependency-light (PyTorch only) so we
-can validate graph-native forward passes before integrating with SB3 wrappers.
+Supports architecture selection through a shared interface:
+- ``sage``: GraphSAGE (PyG-backed when available)
+- ``gcn``: GCN (PyG-backed when available)
+- ``gat``: GAT (PyG-backed when available)
+
+When PyG is unavailable, the module falls back to a dependency-light
+``SimpleGraphSAGE`` implementation.
 """
 
 from __future__ import annotations
@@ -14,6 +19,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tarware_ext.graphs.schema import GraphState, NodeType
+
+try:
+    from torch_geometric.nn import GATConv, GCNConv, SAGEConv
+
+    HAS_PYG = True
+except Exception:
+    GATConv = None
+    GCNConv = None
+    SAGEConv = None
+    HAS_PYG = False
 
 
 @dataclass(frozen=True)
@@ -208,6 +223,154 @@ class SimpleGraphSAGE(nn.Module):
         return h
 
 
+class BaseAssignmentEncoder(nn.Module):
+    """Shared interface for assignment encoders returning node embeddings."""
+
+    architecture: str = "base"
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
+        raise NotImplementedError()
+
+
+class GraphSageEncoder(BaseAssignmentEncoder):
+    """GraphSAGE encoder (PyG) with fallback to SimpleGraphSAGE."""
+
+    architecture = "sage"
+
+    def __init__(self, in_dim: int, emb_dim: int, gnn_layers: int, dropout: float) -> None:
+        super().__init__()
+        self._dropout = float(dropout)
+        self._use_pyg = HAS_PYG
+
+        if self._use_pyg:
+            self.convs = nn.ModuleList()
+            for layer_idx in range(int(gnn_layers)):
+                d_in = in_dim if layer_idx == 0 else emb_dim
+                self.convs.append(SAGEConv(d_in, emb_dim))
+        else:
+            self.fallback = SimpleGraphSAGE(
+                in_dim=in_dim,
+                hidden_dim=emb_dim,
+                out_dim=emb_dim,
+                edge_dim=0,
+                num_layers=gnn_layers,
+                dropout=dropout,
+            )
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
+        if not self._use_pyg:
+            return self.fallback(x, edge_index, edge_attr)
+
+        h = x
+        ei = edge_index
+        if edge_index.numel() > 0:
+            ei = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+        for conv in self.convs:
+            h = conv(h, ei)
+            h = F.relu(h)
+            h = F.dropout(h, p=self._dropout, training=self.training)
+        return h
+
+
+class GcnEncoder(BaseAssignmentEncoder):
+    """GCN encoder (PyG) with fallback to SimpleGraphSAGE."""
+
+    architecture = "gcn"
+
+    def __init__(self, in_dim: int, emb_dim: int, gnn_layers: int, dropout: float) -> None:
+        super().__init__()
+        self._dropout = float(dropout)
+        self._use_pyg = HAS_PYG
+
+        if self._use_pyg:
+            self.convs = nn.ModuleList()
+            for layer_idx in range(int(gnn_layers)):
+                d_in = in_dim if layer_idx == 0 else emb_dim
+                self.convs.append(GCNConv(d_in, emb_dim))
+        else:
+            self.fallback = SimpleGraphSAGE(
+                in_dim=in_dim,
+                hidden_dim=emb_dim,
+                out_dim=emb_dim,
+                edge_dim=0,
+                num_layers=gnn_layers,
+                dropout=dropout,
+            )
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
+        if not self._use_pyg:
+            return self.fallback(x, edge_index, edge_attr)
+
+        h = x
+        ei = edge_index
+        if edge_index.numel() > 0:
+            ei = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+        for conv in self.convs:
+            h = conv(h, ei)
+            h = F.relu(h)
+            h = F.dropout(h, p=self._dropout, training=self.training)
+        return h
+
+
+class GatEncoder(BaseAssignmentEncoder):
+    """GAT encoder (PyG) with fallback to SimpleGraphSAGE."""
+
+    architecture = "gat"
+
+    def __init__(self, in_dim: int, emb_dim: int, gnn_layers: int, dropout: float, heads: int = 2) -> None:
+        super().__init__()
+        self._dropout = float(dropout)
+        self._use_pyg = HAS_PYG
+
+        if self._use_pyg:
+            self.convs = nn.ModuleList()
+            for layer_idx in range(int(gnn_layers)):
+                d_in = in_dim if layer_idx == 0 else emb_dim
+                # concat=False keeps output dim fixed to emb_dim for interface consistency.
+                self.convs.append(GATConv(d_in, emb_dim, heads=int(heads), concat=False, dropout=dropout))
+        else:
+            self.fallback = SimpleGraphSAGE(
+                in_dim=in_dim,
+                hidden_dim=emb_dim,
+                out_dim=emb_dim,
+                edge_dim=0,
+                num_layers=gnn_layers,
+                dropout=dropout,
+            )
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
+        if not self._use_pyg:
+            return self.fallback(x, edge_index, edge_attr)
+
+        h = x
+        ei = edge_index
+        if edge_index.numel() > 0:
+            ei = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+        for conv in self.convs:
+            h = conv(h, ei)
+            h = F.relu(h)
+            h = F.dropout(h, p=self._dropout, training=self.training)
+        return h
+
+
+def build_assignment_encoder(
+    architecture: str,
+    *,
+    in_dim: int,
+    emb_dim: int,
+    gnn_layers: int,
+    dropout: float,
+) -> BaseAssignmentEncoder:
+    arch = str(architecture).strip().lower()
+    if arch in ("sage", "graphsage"):
+        return GraphSageEncoder(in_dim=in_dim, emb_dim=emb_dim, gnn_layers=gnn_layers, dropout=dropout)
+    if arch == "gcn":
+        return GcnEncoder(in_dim=in_dim, emb_dim=emb_dim, gnn_layers=gnn_layers, dropout=dropout)
+    if arch == "gat":
+        return GatEncoder(in_dim=in_dim, emb_dim=emb_dim, gnn_layers=gnn_layers, dropout=dropout)
+    raise ValueError("architecture must be one of: 'sage', 'gcn', 'gat'.")
+
+
 class AssignmentPolicyHead(nn.Module):
     """Decoder that returns logits with shape (n_agvs, n_tasks)."""
 
@@ -242,14 +405,16 @@ class GnnAssignmentModel(nn.Module):
         gnn_layers: int = 2,
         dropout: float = 0.0,
         decoder: str = "dot",
+        architecture: str = "sage",
     ) -> None:
         super().__init__()
-        self.encoder = SimpleGraphSAGE(
+        _ = edge_dim
+        self.architecture = str(architecture).strip().lower()
+        self.encoder = build_assignment_encoder(
+            self.architecture,
             in_dim=node_in_dim,
-            hidden_dim=emb_dim,
-            out_dim=emb_dim,
-            edge_dim=edge_dim,
-            num_layers=gnn_layers,
+            emb_dim=emb_dim,
+            gnn_layers=gnn_layers,
             dropout=dropout,
         )
         self.head = AssignmentPolicyHead(emb_dim=emb_dim, mode=decoder)
@@ -264,7 +429,7 @@ class GnnAssignmentModel(nn.Module):
         return agv_emb, task_emb, logits, probs
 
 
-def build_default_gnn_for_assignment(node_feature_dim: int) -> GnnAssignmentModel:
+def build_default_gnn_for_assignment(node_feature_dim: int, architecture: str = "sage") -> GnnAssignmentModel:
     return GnnAssignmentModel(
         node_in_dim=node_feature_dim,
         emb_dim=64,
@@ -272,4 +437,5 @@ def build_default_gnn_for_assignment(node_feature_dim: int) -> GnnAssignmentMode
         gnn_layers=2,
         dropout=0.0,
         decoder="dot",
+        architecture=architecture,
     )
