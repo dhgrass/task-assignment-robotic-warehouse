@@ -20,9 +20,12 @@ from tarware_ext.sb3 import GraphAssignmentConfig, GraphAssignmentEnv
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--env-id", required=True)
-    p.add_argument("--obs-backend", choices=["assignment", "graph"], default="assignment")
+    p.add_argument("--obs-backend", choices=["assignment", "graph", "graph_dict"], default="assignment")
     p.add_argument("--graph-encoder-mode", choices=["manual", "gnn"], default="manual")
     p.add_argument("--graph-gnn-arch", choices=["sage", "gcn", "gat"], default="sage")
+    p.add_argument("--gnn-emb-dim", type=int, default=64)
+    p.add_argument("--gnn-layers", type=int, default=2)
+    p.add_argument("--gnn-dropout", type=float, default=0.0)
     p.add_argument("--max-request-slots", type=int, default=None)
     p.add_argument("--top-k", type=int, default=None, help="Deprecated alias of --max-request-slots")
     p.add_argument("--steps", type=int, default=200)
@@ -51,7 +54,27 @@ def main() -> None:
         )
     )
 
-    model = PPO("MlpPolicy", env, verbose=1, seed=args.seed)
+    if args.obs_backend == "graph_dict":
+        from tarware_ext.sb3.gnn_feature_extractor import GnnFeatureExtractor
+
+        model = PPO(
+            "MultiInputPolicy",
+            env,
+            policy_kwargs={
+                "features_extractor_class": GnnFeatureExtractor,
+                "features_extractor_kwargs": {
+                    "emb_dim": args.gnn_emb_dim,
+                    "gnn_layers": args.gnn_layers,
+                    "dropout": args.gnn_dropout,
+                    "architecture": args.graph_gnn_arch,
+                },
+            },
+            verbose=1,
+            seed=args.seed,
+        )
+    else:
+        model = PPO("MlpPolicy", env, verbose=1, seed=args.seed)
+
     model.learn(total_timesteps=args.timesteps)
 
     out_path = Path(args.out)
