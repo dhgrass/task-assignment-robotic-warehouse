@@ -20,7 +20,7 @@ from tarware_ext.sb3 import GraphAssignmentConfig, GraphAssignmentEnv
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--env-id", default="tarware-small-2agvs-1pickers-globalobs-v1")
-    p.add_argument("--obs-backend", choices=["assignment", "graph"], default="assignment")
+    p.add_argument("--obs-backend", choices=["assignment", "graph", "graph_dict"], default="assignment")
     p.add_argument("--graph-encoder-mode", choices=["manual", "gnn"], default="manual")
     p.add_argument("--graph-gnn-arch", choices=["sage", "gcn", "gat"], default="sage")
     p.add_argument("--max-request-slots", type=int, default=None)
@@ -46,7 +46,12 @@ def main() -> None:
     )
 
     obs, info = env.reset(seed=args.seed)
-    print("obs shape:", obs.shape, "| info keys:", list(info.keys()) if isinstance(info, dict) else type(info))
+    if isinstance(obs, dict):
+        obs_shapes = {k: tuple(v.shape) for k, v in obs.items()}
+        print("obs keys:", sorted(list(obs.keys())), "| obs shapes:", obs_shapes)
+    else:
+        print("obs shape:", obs.shape)
+    print("info keys:", list(info.keys()) if isinstance(info, dict) else type(info))
 
     for t in range(args.steps):
         action = env.action_space.sample()
