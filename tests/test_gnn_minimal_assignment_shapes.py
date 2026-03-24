@@ -16,7 +16,8 @@ from tarware_ext.graphs.builder_assignment_v1 import AssignmentGraphBuilder
 from tarware_ext.graphs.gnn_minimal import GraphBatch, GnnAssignmentModel, masked_softmax
 
 
-def test_gnn_minimal_forward_shapes() -> None:
+@pytest.mark.parametrize("architecture", ["sage", "gcn", "gat"])
+def test_gnn_minimal_forward_shapes(architecture: str) -> None:
     env = gym.make("tarware-small-2agvs-1pickers-globalobs-v1", disable_env_checker=True)
     try:
         env.reset(seed=21)
@@ -25,7 +26,12 @@ def test_gnn_minimal_forward_shapes() -> None:
         graph = builder.build(unwrapped, controller=None)
 
         batch = GraphBatch.from_graph_state(graph)
-        model = GnnAssignmentModel(node_in_dim=graph.node_features.shape[1], emb_dim=32, edge_dim=2)
+        model = GnnAssignmentModel(
+            node_in_dim=graph.node_features.shape[1],
+            emb_dim=32,
+            edge_dim=2,
+            architecture=architecture,
+        )
 
         agv_emb, task_emb, logits, probs = model(batch)
 
