@@ -228,6 +228,31 @@ class GraphAssignmentEnv(gym.Env):
             "n_tasks": np.array([n_tasks], dtype=np.int32),
         }
 
+    def action_masks(self) -> np.ndarray:
+        """Return valid-action masks for MaskablePPO.
+
+        Shape: (num_agvs, max_request_slots + 1), where index 0 is no-op.
+        """
+
+        mask_tasks = None
+        if isinstance(self._last_obs, dict) and "action_mask" in self._last_obs:
+            mask_tasks = np.asarray(self._last_obs["action_mask"], dtype=bool)
+        else:
+            graph = self.graph_builder.build(self._unwrap_env(), controller=self.controller)
+            mask_tasks = np.zeros((self.num_agvs, self.max_request_slots), dtype=bool)
+            agv_rows = self._resolve_agv_action_mask_rows(graph)
+            n_tasks = min(int(len(graph.task_node_ids)), self.max_request_slots)
+            for i, row_idx in enumerate(agv_rows[: self.num_agvs]):
+                if n_tasks <= 0:
+                    break
+                mask_tasks[i, :n_tasks] = graph.action_mask[int(row_idx), :n_tasks].astype(bool)
+
+        mask_full = np.zeros((self.num_agvs, self.max_request_slots + 1), dtype=bool)
+        # Keep no-op always valid so every AGV has at least one valid action.
+        mask_full[:, 0] = True
+        mask_full[:, 1:] = mask_tasks[:, : self.max_request_slots]
+        return mask_full
+
     def _unwrap_env(self) -> Any:
         cand: Any = self.env
         for _ in range(6):
