@@ -27,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
-sb3 = ["stable-baselines3"]
+sb3 = ["stable-baselines3", "sb3-contrib"]
 
 [project.urls]
 Repository  = "https://github.com/raulsteleac/task-assignment-robotic-warehouse.git"
