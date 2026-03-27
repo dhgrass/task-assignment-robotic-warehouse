@@ -1,4 +1,23 @@
 from __future__ import annotations
+"""
+GNN Feature Extractor for Stable Baselines3
+
+This module provides a custom feature extractor for reinforcement learning agents using
+Stable Baselines3. It processes graph-structured observations (nodes, edges, and masks)
+through a Graph Neural Network (GNN) to generate fixed-size embeddings for policy and
+value networks.
+
+The extractor handles batched graph data by:
+- Extracting node embeddings from a GNN encoder
+- Separating embeddings for AGVs (Autonomous Guided Vehicles) and tasks
+- Computing mean pooling of subsets to create fixed-dimensional representations
+- Combining global graph statistics with pooled node embeddings
+
+Classes:
+    GnnFeatureExtractor: Main feature extractor class that converts dictionary observations
+                        containing graph data into dense tensor representations compatible
+                        with SB3 algorithms.
+"""
 
 from typing import Dict
 
@@ -43,6 +62,27 @@ class GnnFeatureExtractor(BaseFeaturesExtractor):
         return x.mean(dim=0)
 
     def forward(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Forward pass that processes a batch of graph observations and extracts node embeddings.
+        Extracts node features, edges, and graph structure from observations. For each graph in the batch:
+        - Encodes node features using a GNN encoder
+        - Separates embeddings for AGVs (Autonomous Guided Vehicles) and tasks
+        - Aggregates embeddings to produce graph-level, AGV-level, and task-level representations
+        - Concatenates these with graph statistics (node, edge, and task counts)
+        Args:
+            obs: Dictionary containing:
+                - node_features: Node feature matrix
+                - edge_index: Edge connectivity indices
+                - edge_attr: Edge attributes
+                - action_mask: Valid action mask for AGVs
+                - n_nodes: Number of nodes per graph
+                - n_edges: Number of edges per graph
+                - n_tasks: Number of tasks per graph
+        Returns:
+            torch.Tensor: Stacked embeddings of shape (batch_size, embedding_dim) with NaN values replaced by zeros.
+        """
+        
+        
         node_features = obs["node_features"]
         edge_index_all = obs["edge_index"]
         edge_attr_all = obs["edge_attr"]
