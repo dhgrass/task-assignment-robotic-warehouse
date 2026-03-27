@@ -1,7 +1,33 @@
 # ============================================================
-# FILE: tarware_ext/sb3/graph_assignment_env.py
-# ============================================================
-"""SB3 env for explicit AGV assignment with heuristic mission parity.
+"""GraphAssignmentEnv: A Gymnasium-compatible reinforcement learning environment for AGV task assignment.
+
+This module provides a single-agent RL wrapper that controls explicit AGV-to-request assignments
+in a robotic warehouse setting. The environment uses a heuristic controller to manage the full
+mission lifecycle (picking, delivering, returning) while the RL agent focuses solely on making
+assignment decisions.
+
+Key Features:
+- Single-agent Gymnasium API compatible with SB3 algorithms (e.g., PPO, MaskablePPO)
+- Explicit AGV assignment actions: each AGV can be assigned to a request queue slot or pass
+- Flexible observation backends: flat vector, graph-based, or dictionary-based with graph data
+- Support for GNN encoders (SAGE, GCN, GAT) when using graph observations
+- Action masking for valid assignment constraints
+- Episode statistics tracking (deliveries, clashes, stucks, pick rate)
+
+Configuration:
+- obs_backend: Choose observation representation ("assignment", "graph", or "graph_dict")
+- graph_encoder_mode: Manual feature extraction or GNN-based encoding
+- max_request_slots: Maximum tasks in the assignment action space
+- max_steps: Episode length limit
+- distance_mode: Manhattan or Euclidean distance calculation
+
+The environment bridges between low-level warehouse simulation and high-level RL training,
+allowing agents to learn efficient task assignment strategies.
+
+FILE: tarware_ext/sb3/graph_assignment_env.py
+============================================================
+
+SB3 env for explicit AGV assignment with heuristic mission parity.
 
 Design:
 - SB3 controls only new AGV->request assignments (explicit indices).
@@ -186,6 +212,24 @@ class GraphAssignmentEnv(gym.Env):
         return agv_rows
 
     def _encode_graph_dict_obs(self, env: Any) -> Dict[str, np.ndarray]:
+        """
+        Encodes a graph dictionary observation from the environment.
+        Converts graph data into a dictionary of normalized numpy arrays suitable for 
+        neural network processing. Handles node features, edge indices, edge attributes, 
+        and action masks, clipping them to predefined maximum dimensions.
+        Args:
+            env: The environment object used to build the graph.
+        Returns:
+            dict: A dictionary containing:
+                - node_features: (max_nodes, node_feat_dim) array of node feature vectors
+                - edge_index: (2, max_edges) array of edge connectivity indices
+                - edge_attr: (max_edges, edge_feat_dim) array of edge attributes
+                - action_mask: (num_agvs, max_request_slots) binary mask of valid actions
+                - n_nodes: actual number of nodes in the graph
+                - n_edges: actual number of edges in the graph
+                - n_tasks: actual number of tasks in the graph
+        """
+        
         graph = self.graph_builder.build(env, controller=self.controller)
 
         node_features = np.zeros(
@@ -320,6 +364,19 @@ class GraphAssignmentEnv(gym.Env):
         return out
 
     def reset(self, *, seed: int | None = None, options: dict | None = None) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Reset the environment to an initial state for a new episode.
+        Initializes episode tracking variables (time, return, length, deliveries, clashes, 
+        and stuck counts) and resets the underlying environment and controller. Encodes the 
+        initial observation and returns it along with info.
+        Args:
+            seed: Optional seed for reproducibility.
+            options: Optional dictionary of reset options.
+        Returns:
+            Tuple containing the initial observation (dict or array) and info dictionary.
+        """
+        
+        
         self._t = 0
         self._ep_return = 0.0
         self._ep_len = 0
@@ -346,6 +403,28 @@ class GraphAssignmentEnv(gym.Env):
         return out_obs, info if isinstance(info, dict) else {}
 
     def step(self, action: np.ndarray) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
+        """
+        Execute one step of the environment.
+        Converts the RL agent's action into environment-specific actions through the controller,
+        executes the step in the underlying environment, and processes the results.
+        Args:
+            action (np.ndarray): The action from the RL agent to be converted into environment actions.
+        Returns:
+            Tuple[Any, float, bool, bool, Dict[str, Any]]: A tuple containing:
+                - observation (Any): The encoded observation from the environment.
+                - reward (float): The aggregated reward for this step.
+                - terminated (bool): Whether the episode has terminated naturally.
+                - truncated (bool): Whether the episode was truncated (max steps reached or done condition).
+                - info (dict): Additional information about the step, including episode statistics if terminal.
+        Notes:
+            - Handles both Transition and tuple-based step outputs.
+            - Aggregates multi-agent rewards and termination conditions.
+            - Automatically truncates episodes when max_steps is reached.
+            - Logs debug information if verbose mode is enabled.
+            - Updates internal episode counters and observation cache.
+        """
+        
+        
         self._t += 1
 
         assignments = [int(x) for x in np.asarray(action).reshape(-1).tolist()]
