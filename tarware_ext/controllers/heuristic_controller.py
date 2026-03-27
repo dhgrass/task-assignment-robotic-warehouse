@@ -1,4 +1,21 @@
 """Step-wise mission controller with heuristic parity.
+Heuristic-based mission controller for a robotic warehouse environment.
+
+This module implements a stateful step-wise mission controller that manages
+AGV (Automated Guided Vehicle) and picker agent assignments in a warehouse
+setting. It mirrors the mission lifecycle from the `tarware.heuristic` module
+while supporting optional RL-based overrides for AGV-to-item assignments.
+
+Key Features:
+- Maintains separate mission queues for AGVs and pickers
+- Supports three mission types: PICKING, DELIVERING, and RETURNING
+- Implements nearest-neighbor heuristic for AGV assignment
+- Allows RL agents to override default assignments
+- Tracks agent state and location mappings
+- Provides assignment snapshots for external encoders
+
+The controller operates on a step-by-step basis, updating missions based on
+agent positions, availability, and completion of previous tasks.
 
 This controller mirrors the mission semantics in `tarware.heuristic` while
 allowing an optional RL override for new AGV->item assignments.
@@ -20,6 +37,7 @@ class HeuristicController:
     """Stateful mission controller matching the original heuristic lifecycle."""
 
     def __init__(self) -> None:
+        """Initialize empty state for the mission controller."""
         self._initialized = False
         self._timestep = 0
 
@@ -37,6 +55,7 @@ class HeuristicController:
         self._assigned_items: "OrderedDict[Agent, int]" = OrderedDict()
 
     def _unwrap_env(self, env: Any) -> Any:
+        """Unwrap environment wrappers to get the base environment."""
         cand = env
         for _ in range(6):
             if hasattr(cand, "unwrapped") and getattr(cand, "unwrapped") is not cand:
@@ -49,7 +68,7 @@ class HeuristicController:
         return cand
 
     def reset(self, env: Any, seed: int | None = None) -> None:
-        """Reset internal mission state for a fresh episode."""
+        """Reset missions and extract agents, locations, and zones from environment."""
         _ = seed
         self._timestep = 0
 
@@ -82,7 +101,7 @@ class HeuristicController:
         self._initialized = True
 
     def _dist(self, env: Any, start_yx: Tuple[int, int], goal_yx: Tuple[int, int], agv: Agent) -> int:
-        """Heuristic distance based on env.find_path with safe fallback."""
+        """Calculate shortest path distance between two positions."""
         try:
             path = env.find_path(start_yx, goal_yx, agv, care_for_agents=False)
         except Exception:
@@ -92,6 +111,7 @@ class HeuristicController:
         return len(path)
 
     def _available_agvs(self) -> List[Agent]:
+        """Return list of idle AGVs not carrying items or already assigned."""
         return [
             agv
             for agv in self._agvs
@@ -99,6 +119,7 @@ class HeuristicController:
         ]
 
     def _assign_agv_to_item(self, item: Any, agv: Agent) -> bool:
+        """Assign an AGV to pick up a specific item."""
         item_yx = (int(item.y), int(item.x))
         loc_id = self._coords_to_loc_id.get(item_yx)
         if loc_id is None:
@@ -115,6 +136,7 @@ class HeuristicController:
         return True
 
     def _assign_new_agv_missions(self, env: Any, rl_agv_assignments: Optional[Sequence[int]]) -> None:
+        """Create new AGV picking missions, optionally using RL overrides."""
         request_queue = list(env.request_queue)
 
         # 1) Optional RL override: explicit AGV -> request_queue slot assignment.
@@ -154,6 +176,7 @@ class HeuristicController:
             self._assign_agv_to_item(item, closest_agv)
 
     def _update_agv_missions(self, env: Any) -> None:
+        """Progress AGV missions through picking, delivering, and returning states."""
         goal_locations = list(env.goals)
 
         for agv in list(self._assigned_agvs.keys()):
@@ -220,6 +243,7 @@ class HeuristicController:
                 self._assigned_items.pop(agv, None)
 
     def _update_picker_missions(self) -> None:
+        """Assign pickers to locations where AGVs are picking up items."""
         for _agv, mission in self._assigned_agvs.items():
             if mission.mission_type not in (MissionType.PICKING, MissionType.RETURNING):
                 continue
@@ -252,6 +276,7 @@ class HeuristicController:
                 self._assigned_pickers.pop(picker, None)
 
     def _missions_to_actions(self) -> List[int]:
+        """Convert mission assignments into action IDs for all agents."""
         actions: Dict[Agent, int] = {agent: 0 for agent in self._agents}
 
         for agv, mission in self._assigned_agvs.items():
@@ -263,7 +288,7 @@ class HeuristicController:
         return [int(actions[agent]) for agent in self._agents]
 
     def get_assignment_snapshot(self) -> Dict[str, Any]:
-        """Return a lightweight public view of assignment state for encoders."""
+        """Return current assignment state for external observation encoders."""
         mission_codes = {
             MissionType.PICKING: 1.0,
             MissionType.DELIVERING: 2.0,
@@ -291,7 +316,7 @@ class HeuristicController:
         }
 
     def step(self, env: Any, rl_agv_assignments: Optional[Sequence[int]] = None) -> List[int]:
-        """Compute one coherent joint action from missions and optional RL overrides."""
+        """Execute one control step: update missions and return actions for all agents."""
         target = self._unwrap_env(env)
 
         if not self._initialized:
