@@ -54,6 +54,7 @@ class GnnFeatureExtractor(BaseFeaturesExtractor):
         batch_size = int(node_features.shape[0])
         batch_embeddings = []
 
+        count = 0
         for b in range(batch_size):
             n_nodes = int(n_nodes_all[b].reshape(-1)[0].item())
             n_edges = int(n_edges_all[b].reshape(-1)[0].item())
@@ -100,6 +101,10 @@ class GnnFeatureExtractor(BaseFeaturesExtractor):
                 dtype=h.dtype,
             )
             z = torch.cat([graph_emb, agv_pool, task_pool, counts], dim=0)
+            if count == 5:
+                print(f"first 5 dimensions of graph_emb: {z[:5]}")
+                count = 0
+            count += 1
             batch_embeddings.append(z)
 
         out = torch.stack(batch_embeddings, dim=0)
