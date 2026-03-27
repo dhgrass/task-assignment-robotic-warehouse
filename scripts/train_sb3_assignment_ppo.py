@@ -19,6 +19,24 @@ from tarware_ext.sb3 import GraphAssignmentConfig, GraphAssignmentEnv
 
 
 def main() -> None:
+    """
+    Train a Maskable PPO reinforcement learning model for task assignment in a robotic warehouse.
+    
+    This function:
+    - Parses command-line arguments for environment configuration, training parameters, and output settings
+    - Dynamically imports stable-baselines3 contrib modules for masked action spaces
+    - Creates a GraphAssignmentEnv with specified observation backend and graph encoder configuration
+    - Wraps the environment with ActionMasker to enforce valid action constraints
+    - Optionally creates an evaluation environment and callback for monitoring training progress
+    - Initializes and trains a MaskablePPO model with either MultiInputPolicy (for graph observations) 
+      or MlpPolicy (for standard observations)
+    - Performs final evaluation if episodes are configured
+    - Saves the trained model to the specified output path
+    - Cleans up environment resources
+    
+    Raises:
+        RuntimeError: If required stable-baselines3 or sb3-contrib dependencies are not installed.
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--env-id", required=True)
     p.add_argument("--eval-env-id", default=None, help="Optional env id for evaluation; defaults to --env-id")
@@ -57,7 +75,7 @@ def main() -> None:
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
+    # create env function to ensure separate instances for training/eval with different seeds
     def make_env(*, env_id: str, seed: int, verbose: bool):
         return GraphAssignmentEnv(
             GraphAssignmentConfig(
@@ -71,12 +89,12 @@ def main() -> None:
                 verbose=verbose,
             )
         )
-
+    # Create training environment
     env = make_env(env_id=args.env_id, seed=args.seed, verbose=True)
-
+    # Wrap with ActionMasker to enforce valid action constraints
     def mask_fn(current_env):
         return current_env.action_masks()
-
+    # Note: GraphAssignmentEnv should be designed to return appropriate action masks for ActionMasker to function correctly.
     env = ActionMasker(env, mask_fn)
 
     eval_env = None
@@ -102,7 +120,7 @@ def main() -> None:
 
     if args.obs_backend == "graph_dict":
         from tarware_ext.sb3.gnn_feature_extractor import GnnFeatureExtractor
-
+        # Note: MaskablePPO with MultiInputPolicy is used to handle graph observations, and GnnFeatureExtractor processes the graph data into features for the policy network.
         model = MaskablePPO(
             "MultiInputPolicy",
             env,
@@ -119,8 +137,9 @@ def main() -> None:
             seed=args.seed,
         )
     else:
+        # For non-graph observation backends, we can use the standard MlpPolicy.
         model = MaskablePPO("MlpPolicy", env, verbose=1, seed=args.seed)
-
+    # Train the model with the optional evaluation callback to monitor progress and save best models.
     model.learn(total_timesteps=args.timesteps, callback=eval_callback)
 
     final_eval_env = eval_env
